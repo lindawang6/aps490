@@ -4,12 +4,21 @@ import sys
 import socket
 import pickle
 import argparse
-from threading import Thread, Lock
+from threading import Thread, Lock, Condition
 from time import time, sleep
 from serial import Serial
 from random import randint
+
 VOLTAGE = 220
 DEBUG = True
+
+# TODO: CONTROL_DELAY = 900
+CONTROL_DELAY = 6 # 15 minutes
+READ_DELAY = 2 # 2 seconds
+
+# TODO: FAST_CONTROL_DELAY = 0.9
+FAST_CONTROL_DELAY =  0.006
+FAST_READ_DELAY = 0.002
 
 MAKE_MODEL = {"nissan leaf": 40}
 
@@ -22,6 +31,8 @@ car_dataset = []
 
 cars = []
 cars_mutex = Lock()
+
+wait = Condition()
 
 class Car:
     name = ""
@@ -37,14 +48,19 @@ class Car:
     make_model = ""
     capacity = 0
 
-def read(delay):
+def read(delay, fast_sim):
     # delay in seconds
     global i
     while i < len(building_dataset):
+        if i % CONTROL_DELAY // READ_DELAY == 0:
+            wait.acquire()
+            wait.notify()
+            wait.release()
+
         cars_mutex.acquire()
 
         # read available building power
-        # building dataset in kWh
+        # building dataset in kW
         available_current = building_dataset[i] * 1000 / VOLTAGE 
 
         # read current (read from openevse or dataset for simulation)
@@ -88,12 +104,25 @@ def read(delay):
         # TODO: if available_current > 0 charge batteries
 
         cars_mutex.release()
-        sleep(delay)
+        if fast_sim:
+            sleep(FAST_READ_DELAY)
+        else:
+            sleep(delay)
         i += 1
 
-def state_control(state_control_delay, read_delay):
-    while True:
-        current_time = time() - start_time
+def state_control(state_control_delay, read_delay, fast_sim):
+    global car_dataset
+    while i < len(building_dataset):
+        #if fast_sim:
+        #    current_time = i * read_delay
+        #else:
+        #    current_time = time() - start_time
+
+        wait.acquire()
+        wait.wait()
+        wait.release()
+
+        current_time = i * read_delay
 
         # check for new simulated cars that have arrived
         for car in car_dataset:
@@ -106,10 +135,11 @@ def state_control(state_control_delay, read_delay):
                 car.make_model = model.strip().lower()
                 car.capacity = MAKE_MODEL[car.make_model]
                 car.delta_kWh = int(desired_soc) * car.capacity
-                car.departure_time = time() + 40000
+                car.departure_time = 50000
                 cars_mutex.acquire()
                 cars.append(car)
                 cars_mutex.release()
+        car_dataset = [x for x in car_dataset if int(x[0]) > current_time]
 
         cars_mutex.acquire()
         # check if battery needs to be turned on
@@ -128,15 +158,18 @@ def state_control(state_control_delay, read_delay):
         cars.sort(key=lambda x: (x.sleep_mode, x.priority), reverse=True)
 
         cars_mutex.release()
-        sleep(state_control_delay)
+        #if fast_sim:
+        #    sleep(FAST_CONTROL_DELAY)
+        #else:
+        #    sleep(state_control_delay)
 
 def wait_for_car(port):
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
         s.bind(("127.0.0.1", port))
         s.listen()
-        conn, addr = s.accept()
-        with conn:
-            while True:
+        while i < len(building_dataset):
+            conn, addr = s.accept()
+            with conn:
                 data = conn.recv(4096)
                 if len(data) == 0:
                     continue
@@ -155,7 +188,7 @@ def wait_for_car(port):
                     car.make_model = car_info["make_model"].strip('\n').lower()
                     car.capacity = MAKE_MODEL[car.make_model]
                     car.delta_kWh = car_info["delta_soc"] * car.capacity
-                    car.departure_time = time() + 40000
+                    car.departure_time = 50000
                     cars_mutex.acquire()
                     cars.append(car)
                     cars_mutex.release()
@@ -179,9 +212,8 @@ def publish_status(delay, port):
 if __name__ == "__main__":
     # TODO: how to simulate charging station batteries
     # TODO: how to turn on/off physical battery
-    # TODO: determine expected departure time
+    # TODO: determine expected departure time (right now all cars leave around 14 hours after time 0)
     # TODO: add actual departure time to car dataset
-    # TODO: speed up for sim only
 
     parser = argparse.ArgumentParser(description='Charging Management System')
     parser.add_argument("--building-dataset", "--bd", dest="building_file", required=True, help="Building dataset file")
@@ -189,6 +221,7 @@ if __name__ == "__main__":
     parser.add_argument("--user-input-port", "--up", dest="user_port", type=int, default=8000, help="Port to listen for user input")
     parser.add_argument("--visualization-port", "--vp", dest="visualization_port", type=int, default=9000, help="Port to send visualization output")
     parser.add_argument("--openevse-port", "--op", dest="openevse_port", default="", help="OpenEVSE serial port")
+    parser.add_argument("--fast-sim", "--fs", dest="fast_sim", action="store_true", help="Run dataset without delay")
     args = parser.parse_args()
 
     try:
@@ -207,18 +240,23 @@ if __name__ == "__main__":
     for line in file:
         car_dataset.append(line.split(","))
 
-    print (args.openevse_port)
     try:
          openevse = Serial(args.openevse_port)
     except Exception as ex:
          openevse = None
 
-    read_thread = Thread(target=read, args=(2,)) # every two seconds
-    state_control_thread = Thread(target=state_control, args=(900, 2)) # every fifteen minutes
+    read_thread = Thread(target=read, args=(READ_DELAY, args.fast_sim)) # every two seconds
+    state_control_thread = Thread(target=state_control, args=(CONTROL_DELAY, READ_DELAY, args.fast_sim))
     wait_for_car_thread = Thread(target=wait_for_car, args=(args.user_port,))
-    publish_status_thread = Thread(target=publish_status, args=(2, args.visualization_port)) # every two seconds
+    publish_status_thread = Thread(target=publish_status, args=(2, args.visualization_port))
 
     read_thread.start()
     state_control_thread.start()
     wait_for_car_thread.start()
     publish_status_thread.start()
+
+    read_thread.join()
+
+    print("Log: Building dataset complete")
+    for car in cars:
+        print("Name: " + str(car.name) + " SoC remaining(%): " + str(car.delta_kWh/car.capacity))
