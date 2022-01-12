@@ -9,7 +9,7 @@ from time import time, sleep
 from serial import Serial
 from random import randint
 
-VOLTAGE = 220
+VOLTAGE = 240
 DEBUG = True
 
 CONTROL_DELAY = 6 # 6 seconds
@@ -41,8 +41,7 @@ class Car:
     sleep_mode = False
     priority = 0
     delta_kWh = 0 # desired delta SoC * total capacity
-    estimated_departure = 0
-    actual_departure = 0
+    departure = 0
     min_current = 6
     max_current = 24 # 24A for L1 
     charging_current = 0
@@ -153,8 +152,7 @@ def state_control(fast_sim):
                 car.make_model = model.strip().lower()
                 car.capacity = MAKE_MODEL[car.make_model]
                 car.delta_kWh = int(desired_soc) * car.capacity * 0.01
-                car.estimated_departure = 50000
-                car.actual_departure = int(departure)
+                car.departure = int(departure)
                 car.sleep_mode = sleep_mode.strip() == 'True'
                 cars_mutex.acquire()
                 cars.append(car)
@@ -165,20 +163,20 @@ def state_control(fast_sim):
 
         # check for cars that have left
         for car in cars[:]:
-            if car.actual_departure < current_time:
-                print("Car: " + str(car.name) + " left at " + str(car.actual_departure) + " with SoC remaining(%): " + str(100 * car.delta_kWh/car.capacity))
+            if car.departure < current_time:
+                print("Car: " + str(car.name) + " left at " + str(car.departure) + " with SoC remaining(%): " + str(100 * car.delta_kWh/car.capacity))
                 cars.remove(car)
 
         # check if battery needs to be turned on
         for car in cars:
-            if not car.battery_on and car.delta_kWh >= 0.8 * car.max_current * VOLTAGE * 0.001 * (car.estimated_departure - current_time) / 3600:
+            if not car.battery_on and car.delta_kWh >= 0.8 * car.max_current * VOLTAGE * 0.001 * (car.departure - current_time) / 3600:
                 print("Log: Turning on battery for " + car.name)
                 car.battery_on = True 
 
         # assign priorities
         normalize = 0
         for car in cars:
-            car.priority = car.delta_kWh / (car.estimated_departure - current_time)
+            car.priority = car.delta_kWh / (car.departure - current_time)
             normalize += car.priority
         if normalize > 0:
             for car in cars:
@@ -210,7 +208,7 @@ def wait_for_car(port):
                     car.make_model = car_info["make_model"].strip('\n').lower()
                     car.capacity = MAKE_MODEL[car.make_model]
                     car.delta_kWh = car_info["delta_soc"] * car.capacity
-                    car.estimated_departure = 50000
+                    car.departure = i * READ_DELAY
                     cars_mutex.acquire()
                     cars.append(car)
                     cars_mutex.release()
