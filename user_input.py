@@ -12,6 +12,8 @@ if __name__ == "__main__":
     car_info["make_model"] = sys.stdin.readline()
     print("Enter desired change in SoC(%): ")
     car_info["delta_soc"] = int(sys.stdin.readline())
+    print("Enter departure time (hh:mm:ss): ")
+    car_info["departure"] = sys.stdin.readline()
 
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
         s.connect(("127.0.0.1", int(sys.argv[1])))

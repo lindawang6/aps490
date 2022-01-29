@@ -13,7 +13,7 @@ First reading is reading at 6pm. Each reading is two seconds apart.
 
 List of cars separated by new lines.
 
-Format of each line: name, arrival time (seconds), departure time (seconds), model, desired change in SoC (%), sleep mode (True/False).
+Format of each line: name, arrival time (seconds), departure time (hh:mm:ss), model, desired change in SoC (%), sleep mode (True/False).
 
 Arrival time of 0 means the car arrives at 6pm.
 

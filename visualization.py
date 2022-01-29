@@ -25,9 +25,13 @@ if __name__ == "__main__":
         visualization_info = pickle.loads(data)
 
         stdscr.clear()
-        stdscr.addstr(0, 0, "Available building power: " + str(visualization_info["building_power"]))
-        i = 1
-        for car in visualization_info["cars"]:
-            stdscr.addstr(i, 0, "Name: " + str(car["name"]) + " SoC remaining(%): " + str(car["delta_soc"]) + " Current(A): " + str(car["current"]) + " Battery: " + str(car["battery"]))
+        stdscr.addstr(0, 0, "Current time: " + visualization_info["current_time"])
+        stdscr.addstr(1, 0, "Available building power: " + str(visualization_info["building_power"]))
+        i = 2
+        for station_num, car in visualization_info["cars"].items():
+            if car == "empty":
+                stdscr.addstr(i, 0, "Station: " + str(station_num) + " Status: empty")
+            else:
+                stdscr.addstr(i, 0, "Station: " + str(station_num) + " Name: " + str(car["name"]) + " SoC remaining(%): " + str(car["delta_soc"]) + " Current(A): " + str(car["current"]) + " Battery: " + str(car["battery"]) + " Remaining time: " + str(car["remaining_time"]))
             i += 1
         stdscr.refresh()

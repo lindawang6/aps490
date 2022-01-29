@@ -24,6 +24,9 @@ MAKE_MODEL = {"nissan leaf": 40,
 
 openevse = None
 i = 0
+num_stations = 0
+station_number = 2
+start = ""
 
 building_dataset = []
 car_dataset = []
@@ -50,6 +53,23 @@ class Car:
     make_model = ""
     capacity = 0
     battery_capacity = 20
+    station_no = 0
+
+def str_to_int(string):
+    start_time = start.split(":")
+    current_time = string.split(":")
+    start_time = int(start_time[0]) * 3600 + int(start_time[1]) * 60 + int(start_time[2])
+    current_time = int(current_time[0]) * 3600 + int(current_time[1]) * 60 + int(current_time[2])
+    return (current_time - start_time) % 86400
+
+def int_to_str(integer):
+    start_time = start.split(":")
+    start_time = int(start_time[0]) * 3600 + int(start_time[1]) * 60 + int(start_time[2])
+    current_time = (integer + start_time) % 86400
+    hours = current_time // 3600
+    minutes = (current_time - (hours * 3600)) // 60
+    seconds = current_time - hours * 3600 - minutes * 60
+    return str(hours).zfill(2) + ":" + str(minutes).zfill(2) + ":" + str(seconds).zfill(2) 
 
 def read(fast_sim, log):
     # delay in seconds
@@ -73,8 +93,18 @@ def read(fast_sim, log):
             if car.simulation:
                 measured_current = car.charging_current * 0.8
             else:
-                openevse.write("$GG")
-                measured_current = int(openevse.readline())
+                openevse.open()
+                cmd = "$GG"
+                if openevse.is_open:
+                    openevse.write(cmd.encode())
+                if openevse.in_waiting > 0:
+                    msg = openevse.read(openevse.in_waiting)
+                openevse.flush()
+                openevse.close()
+                try:
+                    measured_current = msg.decode().split(" ")[1]
+                except Exception as e:
+                    measured_current = car.charging_current * 0.8
             car.delta_kWh -= measured_current * VOLTAGE * (READ_DELAY / 3600) * 0.001
             if car.delta_kWh < 0:
                 car.delta_kWh = 0
@@ -112,7 +142,12 @@ def read(fast_sim, log):
             used_current += (car.charging_current - car.battery_current)
 
             if car.name == "openevse":
-                openevse.write("$SC " + car.charging_current)
+                openevse.open()
+                cmd = "$SC " + str(int(car.charging_current)) + "V"
+                if openevse.is_open:
+                    openevse.write(cmd.encode())
+                openevse.flush()
+                openevse.close()
 
         # Log building current, battery current, remaining SoC
         if log:
@@ -134,12 +169,14 @@ def read(fast_sim, log):
 
 def state_control(fast_sim):
     global car_dataset
+    global station_number
     while i < len(building_dataset):
         wait.acquire()
         wait.wait()
         wait.release()
 
         current_time = i * READ_DELAY
+        time_readable = int_to_str(current_time)
 
         # check for new simulated cars that have arrived
         for car_data in car_dataset:
@@ -152,8 +189,10 @@ def state_control(fast_sim):
                 car.make_model = model.strip().lower()
                 car.capacity = MAKE_MODEL[car.make_model]
                 car.delta_kWh = int(desired_soc) * car.capacity * 0.01
-                car.departure = int(departure)
+                car.departure = str_to_int(departure)
                 car.sleep_mode = sleep_mode.strip() == 'True'
+                car.station_no = station_number
+                station_number += 1
                 cars_mutex.acquire()
                 cars.append(car)
                 cars_mutex.release()
@@ -164,7 +203,7 @@ def state_control(fast_sim):
         # check for cars that have left
         for car in cars[:]:
             if car.departure < current_time:
-                print("Car: " + str(car.name) + " left at " + str(car.departure) + " with SoC remaining(%): " + str(100 * car.delta_kWh/car.capacity))
+                print("Car: " + str(car.name) + " left at " + str(time_readable) + " with SoC remaining(%): " + str(100 * car.delta_kWh/car.capacity))
                 cars.remove(car)
 
         # check if battery needs to be turned on
@@ -199,16 +238,28 @@ def wait_for_car(port):
                 if DEBUG:
                     print("Log: User input received")
                 if car_info["station_no"] == 1 and openevse:
-                    # TODO: check that car is connected to openevse
-                    if DEBUG:
-                        print("Log: Car plugged in")
+                    openevse.open()
+                    cmd = "$GS"
+                    if openevse.is_open:
+                        openevse.write(cmd.encode())
+                    if openevse.in_waiting > 0:
+                        msg = openevse.read(openevse.in_waiting)
+                    openevse.flush()
+                    openevse.close()
+                    if msg.decode()[:5] == "$OK 2" or msg.decode()[:5] == "$OK 3":
+                        print("Log: Car connected")
+                    else:
+                        print("Warn: Car not connected. OpenEVSE returned: " + msg.decode())
+                        continue
+
                     car = Car()
                     car.name = "openevse"
                     car.simulation = False
                     car.make_model = car_info["make_model"].strip('\n').lower()
                     car.capacity = MAKE_MODEL[car.make_model]
                     car.delta_kWh = car_info["delta_soc"] * car.capacity
-                    car.departure = i * READ_DELAY
+                    car.departure = str_to_int(car_info["departure"])
+                    car.station_no = 1
                     cars_mutex.acquire()
                     cars.append(car)
                     cars_mutex.release()
@@ -221,22 +272,29 @@ def publish_status(delay, port):
         with conn:
             while i < len(building_dataset):
                 visualization_info = {}
+                visualization_info["current_time"] = int_to_str(i * READ_DELAY)
                 visualization_info["building_power"] = building_dataset[i]
-                visualization_info["cars"] = []
+                visualization_info["cars"] = {}
                 for car in cars:
-                    visualization_info["cars"].append({"name": car.name, "delta_soc": 100 * car.delta_kWh/car.capacity, "current": car.charging_current, "battery": car.battery_current})
+                    visualization_info["cars"][car.station_no] = {"name": car.name, "delta_soc": 100 * car.delta_kWh/car.capacity, "current": car.charging_current, "battery": car.battery_current, "remaining_time": car.departure - i * READ_DELAY}
+                for num in range(1, num_stations + 1):
+                    if num not in visualization_info["cars"]:
+                        visualization_info["cars"][num] = "empty"
                 data = pickle.dumps(visualization_info)
-                conn.send(data)
+                try:
+                    conn.send(data)
+                except:
+                    conn, addr = s.accept()
                 sleep(delay)
 
 if __name__ == "__main__":
     # TODO: how to simulate charging station batteries (sharing/charging/assigning batteries)
     # TODO: how to turn on/off physical battery
-    # TODO: determine expected departure time (right now all cars leave around 14 hours after time 0)
 
     parser = argparse.ArgumentParser(description='Charging Management System')
     parser.add_argument("--building-dataset", "--bd", dest="building_file", required=True, help="Building dataset file")
     parser.add_argument("--car-dataset", "--cd", dest="car_file", required=True, help="Car dataset file")
+    parser.add_argument("--start-time", "--st", dest="start_time", default="18:00:00", help="Start time of building dataset (default: %(default)s)")
     parser.add_argument("--user-input-port", "--up", dest="user_port", type=int, default=8000, help="Port to listen for user input (default: %(default)s)")
     parser.add_argument("--visualization-port", "--vp", dest="visualization_port", type=int, default=9000, help="Port to send visualization output (default: %(default)s)")
     parser.add_argument("--openevse-port", "--op", dest="openevse_port", default="", help="OpenEVSE serial port")
@@ -263,6 +321,9 @@ if __name__ == "__main__":
         exit(0)
     for line in file:
         car_dataset.append(line.split(","))
+
+    num_stations = len(car_dataset) + 1
+    start = args.start_time
 
     try:
          openevse = Serial(args.openevse_port)
