@@ -12,6 +12,10 @@ from random import randint
 VOLTAGE = 240
 DEBUG = True
 
+BATTERY_CAPACITY = 5
+# Lithium ion batteries should charge at 0.8C
+BATTERY_CHARGING_CURRENT = (BATTERY_CAPACITY * 1000 / VOLTAGE) * 0.8
+
 CONTROL_DELAY = 6 # 6 seconds
 READ_DELAY = 2 # 2 seconds
 
@@ -25,7 +29,7 @@ MAKE_MODEL = {"nissan leaf": 40,
 openevse = None
 i = 0
 num_stations = 0
-station_number = 2
+station_number = 1
 start = ""
 
 building_dataset = []
@@ -35,6 +39,7 @@ max_building = 0
 
 cars = []
 cars_mutex = Lock()
+stations = []
 
 wait = Condition()
 
@@ -52,8 +57,20 @@ class Car:
     battery_on = False
     make_model = ""
     capacity = 0
-    battery_capacity = 20
-    station_no = 0
+    station_no = -1
+    battery_no = -1
+
+class Station:
+    station_no = -1
+    battery_capacity = BATTERY_CAPACITY
+    battery_current = 0
+    charging_current = 0
+
+    def __init__ (self, station_no, battery_capacity=BATTERY_CAPACITY, battery_current=0, charging_current=0):
+        self.station_no = station_no
+        self.battery_capacity = battery_capacity
+        self.battery_current = battery_current
+        self.charging_current = charging_current
 
 def str_to_int(string):
     start_time = start.split(":")
@@ -112,7 +129,9 @@ def read(fast_sim, log):
             if measured_current > 0 and measured_current <= car.charging_current * 0.75: # this value may need to be tuned
                 car.max_current = measured_current
 
-            car.battery_capacity -= car.battery_current * VOLTAGE * (READ_DELAY / 3600) * 0.001
+        for station in stations:
+            station.battery_capacity -= station.battery_current * VOLTAGE * (READ_DELAY / 3600) * 0.001
+            station.battery_capacity += station.charging_current * VOLTAGE * (READ_DELAY / 3600) * 0.001
 
         # assign current (cars are already sorted from highest priority to lowest priority)
         remove_cars = 0
@@ -122,28 +141,76 @@ def read(fast_sim, log):
 
             if car.priority == 0:
                 pass
-            elif car.battery_on and car.battery_capacity > car.max_current * VOLTAGE * (READ_DELAY / 3600) * 0.001:
+            elif car.battery_on:
                 if car.charging_current < car.max_current:
-                    car.battery_current = car.max_current - car.charging_current
-                car.charging_current = car.max_current
+                    if car.battery_no != -1 and stations[car.battery_no].battery_capacity > car.max_current * VOLTAGE * (READ_DELAY / 3600) * 0.001:
+                        stations[car.battery_no].battery_current = car.max_current - car.charging_current
+                        car.battery_current = car.max_current - car.charging_current
+                    elif stations[car.station_no].battery_current == 0 and stations[car.station_no].battery_capacity > car.max_current * VOLTAGE * (READ_DELAY / 3600) * 0.001:
+                        stations[car.station_no].battery_current = car.max_current - car.charging_current
+                        car.battery_current = car.max_current - car.charging_current
+                        car.battery_no = car.station_no
+                    else:
+                        if car.battery_no != -1:
+                            stations[car.battery_no].battery_current = 0
+                        stations_tmp = [station for station in stations if station.battery_current == 0]
+                        stations_tmp.sort(key=lambda x: x.battery_capacity, reverse=True)
 
+                        print(str(car.battery_no))
+                        for station in stations:
+                            print(str(station.station_no) + " " + str(station.battery_current) + " " + str(station.battery_capacity))
+
+                        if len(stations_tmp) > 0 and stations_tmp[0].battery_capacity > car.max_current * VOLTAGE * (READ_DELAY / 3600) * 0.001:
+                            stations[stations_tmp[0].station_no].battery_current = car.max_current - car.charging_current
+                            car.battery_current = car.max_current - car.charging_current
+                            car.battery_no = stations_tmp[0].station_no
+                        else:
+                            print("Warn: no batteries available")
+                elif car.battery_no != -1:
+                    stations[car.battery_no].battery_current = 0
+                    car.battery_no = -1
+
+                car.charging_current = car.max_current
             else:
                 if available_current - used_current < car.min_current:
                     if car.sleep_mode:
                         car.charging_current = car.min_current
-                        car.battery_current = car.min_current - (available_current - used_current)
+                        if car.battery_no != -1 and stations[car.battery_no].battery_capacity > car.min_current * VOLTAGE * (READ_DELAY / 3600) * 0.001:
+                            stations[car.battery_no].battery_current = car.min_current - (available_current - used_current)
+                            car.battery_current = car.min_current - (available_current - used_current)
+                        elif stations[car.station_no].battery_current == 0 and stations[car.station_no].battery_capacity > car.min_current * VOLTAGE * (READ_DELAY / 3600) * 0.001:
+                            stations[car.station_no].battery_current = car.min_current - (available_current - used_current)
+                            car.battery_current = car.min_current - (available_current - used_current)
+                            car.battery_no = car.station_no
+                        else:
+                            if car.battery_no != -1:
+                                stations[car.battery_no].battery_current = 0
+                            stations_tmp = [station for station in stations if station.battery_current == 0]
+                            stations_tmp.sort(key=lambda x: x.battery_capacity, reverse=True)
+                            if len(stations_tmp) > 0 and stations_tmp[0].battery_capacity > car.min_current * VOLTAGE * (READ_DELAY / 3600) * 0.001:
+                                stations[stations_tmp[0].station_no].battery_current = car.min_current - (available_current - used_current)
+                                car.battery_current = car.min_current - (available_current - used_current)
+                                car.battery_no = stations_tmp[0].station_no
+                            else:
+                                print("Warn: no batteries available")
                     else:
                         car.charging_current = 0
                 elif car.charging_current > car.max_current:
                     car.charging_current = car.max_current
+                    if car.battery_no != -1:
+                        stations[car.battery_no].battery_current = 0
+                        car.battery_no = -1
                 elif car.charging_current < car.min_current:
                     car.charging_current = car.min_current
+                    if car.battery_no != -1:
+                        stations[car.battery_no].battery_current = 0
+                        car.battery_no = -1
 
             used_current += (car.charging_current - car.battery_current)
 
             if car.name == "openevse":
                 openevse.open()
-                cmd = "$SC " + str(int(car.charging_current)) + "V"
+                cmd = "$SC " + str(int(car.charging_current)) + " V"
                 if openevse.is_open:
                     openevse.write(cmd.encode())
                 openevse.flush()
@@ -153,12 +220,27 @@ def read(fast_sim, log):
         if log:
             for car in cars:
                 file = open(car.name + ".txt", "a")
-                file.write(str(car.charging_current) + ", " + str(car.battery_current) + ", " + str(100 * car.delta_kWh/car.capacity) + "\n")
+                file.write(str(car.charging_current) + ", " + str(car.battery_current) + ", " + str(100 * car.delta_kWh/car.capacity) + ", " + str(car.battery_no) + "\n")
+            for station in stations:
+                file = open("station" + str(station.station_no) + ".txt", "a")
+                file.write(str(station.battery_current) + ", " + str(station.charging_current) + ", " + str(station.battery_capacity) + "\n")
+
             for car in car_dataset:
                 file = open(car[0] + ".txt", "a")
-                file.write("0, 0, 0\n")
+                file.write("0, 0, 0, 0\n")
 
-        # TODO: if available_current > 0 charge batteries
+        # charge station batteries with remaining current
+
+        stations_tmp = [station for station in stations if (station.battery_current == 0 and station.battery_capacity < (BATTERY_CAPACITY * 0.8))]
+        stations_tmp.sort(key=lambda x: x.battery_capacity)
+
+        for station in stations:
+            station.charging_current = 0
+
+        while available_current >= BATTERY_CHARGING_CURRENT and len(stations_tmp) > 0:
+            stations[stations_tmp[0].station_no].charging_current = BATTERY_CHARGING_CURRENT
+            available_current -= BATTERY_CHARGING_CURRENT
+            stations_tmp.pop(0)
 
         cars_mutex.release()
         if fast_sim:
@@ -202,8 +284,9 @@ def state_control(fast_sim):
 
         # check for cars that have left
         for car in cars[:]:
-            if car.departure < current_time:
+            if car.departure <= current_time:
                 print("Car: " + str(car.name) + " left at " + str(time_readable) + " with SoC remaining(%): " + str(100 * car.delta_kWh/car.capacity))
+                stations[car.battery_no].battery_current = 0
                 cars.remove(car)
 
         # check if battery needs to be turned on
@@ -237,7 +320,7 @@ def wait_for_car(port):
                 car_info = pickle.loads(data)
                 if DEBUG:
                     print("Log: User input received")
-                if car_info["station_no"] == 1 and openevse:
+                if car_info["station_no"] == 0 and openevse:
                     openevse.open()
                     cmd = "$GS"
                     if openevse.is_open:
@@ -259,7 +342,7 @@ def wait_for_car(port):
                     car.capacity = MAKE_MODEL[car.make_model]
                     car.delta_kWh = car_info["delta_soc"] * car.capacity
                     car.departure = str_to_int(car_info["departure"])
-                    car.station_no = 1
+                    car.station_no = 0
                     cars_mutex.acquire()
                     cars.append(car)
                     cars_mutex.release()
@@ -277,7 +360,7 @@ def publish_status(delay, port):
                 visualization_info["cars"] = {}
                 for car in cars:
                     visualization_info["cars"][car.station_no] = {"name": car.name, "delta_soc": 100 * car.delta_kWh/car.capacity, "current": car.charging_current, "battery": car.battery_current, "remaining_time": car.departure - i * READ_DELAY}
-                for num in range(1, num_stations + 1):
+                for num in range(num_stations):
                     if num not in visualization_info["cars"]:
                         visualization_info["cars"][num] = "empty"
                 data = pickle.dumps(visualization_info)
@@ -323,6 +406,9 @@ if __name__ == "__main__":
         car_dataset.append(line.split(","))
 
     num_stations = len(car_dataset) + 1
+    for num in range(num_stations):
+        stations.append(Station(station_no=num))
+ 
     start = args.start_time
 
     try:
