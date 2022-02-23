@@ -114,14 +114,17 @@ def read(fast_sim, log):
                 cmd = "$GG"
                 if openevse.is_open:
                     openevse.write(cmd.encode())
+                openevse.flush()
+                while openevse.in_waiting == 0:
+                    pass
                 if openevse.in_waiting > 0:
                     msg = openevse.read(openevse.in_waiting)
-                openevse.flush()
                 openevse.close()
                 try:
                     measured_current = msg.decode().split(" ")[1]
                 except Exception as e:
                     measured_current = car.charging_current * 0.8
+                print(measured_current)
             car.delta_kWh -= measured_current * VOLTAGE * (READ_DELAY / 3600) * 0.001
             if car.delta_kWh < 0:
                 car.delta_kWh = 0
@@ -325,9 +328,11 @@ def wait_for_car(port):
                     cmd = "$GS"
                     if openevse.is_open:
                         openevse.write(cmd.encode())
+                    openevse.flush()
+                    while openevse.in_waiting == 0:
+                        pass
                     if openevse.in_waiting > 0:
                         msg = openevse.read(openevse.in_waiting)
-                    openevse.flush()
                     openevse.close()
                     if msg.decode()[:5] == "$OK 2" or msg.decode()[:5] == "$OK 3":
                         print("Log: Car connected")
