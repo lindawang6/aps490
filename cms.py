@@ -110,18 +110,15 @@ def read(fast_sim, log):
             if car.simulation:
                 measured_current = car.charging_current * 0.8
             else:
-                openevse.open()
-                cmd = "$GG"
+                cmd = b"$GG\r"
                 if openevse.is_open:
-                    openevse.write(cmd.encode())
-                openevse.flush()
+                    openevse.write(cmd)
                 while openevse.in_waiting == 0:
                     pass
                 if openevse.in_waiting > 0:
                     msg = openevse.read(openevse.in_waiting)
-                openevse.close()
                 try:
-                    measured_current = msg.decode().split(" ")[1]
+                    measured_current = float(msg.decode().split(" ")[1]) / 1000
                 except Exception as e:
                     measured_current = car.charging_current * 0.8
                 print(measured_current)
@@ -212,13 +209,13 @@ def read(fast_sim, log):
             used_current += (car.charging_current - car.battery_current)
 
             if car.name == "openevse":
-                openevse.open()
-                cmd = "$SC " + str(int(car.charging_current)) + " V"
+                cmd = "$SC " + str(int(car.charging_current)) + " V\r"
                 if openevse.is_open:
                     openevse.write(cmd.encode())
-                openevse.flush()
-                openevse.close()
-
+                while openevse.in_waiting == 0:
+                    pass
+                if openevse.in_waiting > 0:
+                    msg = openevse.read(openevse.in_waiting)
         # Log building current, battery current, remaining SoC
         if log:
             for car in cars:
@@ -324,17 +321,15 @@ def wait_for_car(port):
                 if DEBUG:
                     print("Log: User input received")
                 if car_info["station_no"] == 0 and openevse:
-                    openevse.open()
-                    cmd = "$GS"
+                    cmd = b"$GS\r"
+                    print("OpenEVSE station")
                     if openevse.is_open:
-                        openevse.write(cmd.encode())
-                    openevse.flush()
+                        openevse.write(cmd)
                     while openevse.in_waiting == 0:
                         pass
                     if openevse.in_waiting > 0:
                         msg = openevse.read(openevse.in_waiting)
-                    openevse.close()
-                    if msg.decode()[:5] == "$OK 2" or msg.decode()[:5] == "$OK 3":
+                    if msg.decode()[:6] == "$OK 02" or msg.decode()[:6] == "$OK 03":
                         print("Log: Car connected")
                     else:
                         print("Warn: Car not connected. OpenEVSE returned: " + msg.decode())
@@ -417,7 +412,7 @@ if __name__ == "__main__":
     start = args.start_time
 
     try:
-         openevse = Serial(args.openevse_port)
+         openevse = Serial(args.openevse_port, 115200, xonxoff=True)
     except Exception as ex:
          openevse = None
 
