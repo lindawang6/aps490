@@ -4,12 +4,16 @@ import sys
 import socket
 import pickle
 import argparse
+import can
 from threading import Thread, Lock, Condition
 from time import time, sleep
 from serial import Serial
 from random import randint
 
+import zeka
+
 VOLTAGE = 240
+ZEKA_VOLTAGE = 300
 DEBUG = True
 
 BATTERY_CAPACITY = 5
@@ -27,6 +31,7 @@ MAKE_MODEL = {"nissan leaf": 40,
               "chevrolet bolt": 65}
 
 openevse = None
+zeka_bus = None
 i = 0
 num_stations = 0
 station_number = 1
@@ -97,6 +102,8 @@ def read(fast_sim, log):
             wait.notify()
             wait.release()
 
+        start = time()
+
         cars_mutex.acquire()
 
         # read building power
@@ -143,7 +150,12 @@ def read(fast_sim, log):
                 pass
             elif car.battery_on:
                 if car.charging_current < car.max_current:
-                    if car.battery_no != -1 and stations[car.battery_no].battery_capacity > car.max_current * VOLTAGE * (READ_DELAY / 3600) * 0.001:
+                    if not car.simulation:
+                        if car.battery_no == -1:
+                            car.battery_no = 0
+                        stations[0].battery_current = car.max_current - car.charging_current
+                        car.battery_current = car.max_current - car.charging_current
+                    elif car.battery_no != -1 and stations[car.battery_no].battery_capacity > car.max_current * VOLTAGE * (READ_DELAY / 3600) * 0.001:
                         stations[car.battery_no].battery_current = car.max_current - car.charging_current
                         car.battery_current = car.max_current - car.charging_current
                     elif stations[car.station_no].battery_current == 0 and stations[car.station_no].battery_capacity > car.max_current * VOLTAGE * (READ_DELAY / 3600) * 0.001:
@@ -153,7 +165,7 @@ def read(fast_sim, log):
                     else:
                         if car.battery_no != -1:
                             stations[car.battery_no].battery_current = 0
-                        stations_tmp = [station for station in stations if station.battery_current == 0]
+                        stations_tmp = [station for station in stations if (station.battery_current == 0 and station.station_no != 0)]
                         stations_tmp.sort(key=lambda x: x.battery_capacity, reverse=True)
 
                         print(str(car.battery_no))
@@ -175,7 +187,13 @@ def read(fast_sim, log):
                 if available_current - used_current < car.min_current:
                     if car.sleep_mode:
                         car.charging_current = car.min_current
-                        if car.battery_no != -1 and stations[car.battery_no].battery_capacity > car.min_current * VOLTAGE * (READ_DELAY / 3600) * 0.001:
+
+                        if not car.simulation:
+                            if car.battery_no == -1:
+                                car.battery_no = 0
+                            stations[0].battery_current = car.max_current - car.charging_current
+                            car.battery_current = car.max_current - car.charging_current
+                        elif car.battery_no != -1 and stations[car.battery_no].battery_capacity > car.min_current * VOLTAGE * (READ_DELAY / 3600) * 0.001:
                             stations[car.battery_no].battery_current = car.min_current - (available_current - used_current)
                             car.battery_current = car.min_current - (available_current - used_current)
                         elif stations[car.station_no].battery_current == 0 and stations[car.station_no].battery_capacity > car.min_current * VOLTAGE * (READ_DELAY / 3600) * 0.001:
@@ -185,7 +203,7 @@ def read(fast_sim, log):
                         else:
                             if car.battery_no != -1:
                                 stations[car.battery_no].battery_current = 0
-                            stations_tmp = [station for station in stations if station.battery_current == 0]
+                            stations_tmp = [station for station in stations if (station.battery_current == 0 and station.station_no != 0)]
                             stations_tmp.sort(key=lambda x: x.battery_capacity, reverse=True)
                             if len(stations_tmp) > 0 and stations_tmp[0].battery_capacity > car.min_current * VOLTAGE * (READ_DELAY / 3600) * 0.001:
                                 stations[stations_tmp[0].station_no].battery_current = car.min_current - (available_current - used_current)
@@ -231,7 +249,7 @@ def read(fast_sim, log):
 
         # charge station batteries with remaining current
 
-        stations_tmp = [station for station in stations if (station.battery_current == 0 and station.battery_capacity < (BATTERY_CAPACITY * 0.8))]
+        stations_tmp = [station for station in stations if (station.battery_current == 0 and station.battery_capacity < (BATTERY_CAPACITY * 0.9))]
         stations_tmp.sort(key=lambda x: x.battery_capacity)
 
         for station in stations:
@@ -243,10 +261,12 @@ def read(fast_sim, log):
             stations_tmp.pop(0)
 
         cars_mutex.release()
+
+        end = time()
         if fast_sim:
             sleep(FAST_READ_DELAY)
         else:
-            sleep(READ_DELAY)
+            sleep(READ_DELAY - (end - start))
         i += 1
 
 def state_control(fast_sim):
@@ -370,6 +390,30 @@ def publish_status(delay, port):
                     conn, addr = s.accept()
                 sleep(delay)
 
+def zeka_control():
+    zeka_obj = zeka.Zeka()
+    zeka_obj.zeka_init(zeka_bus)
+    zeka_obj.zeka_receive(zeka_bus)
+    while not zeka_obj.zeka_precharge_done:
+        zeka_obj.zeka_main_status(zeka_bus)
+        zeka_obj.zeka_receive(zeka_bus)
+        sleep(1)
+    zeka_obj.zeka_set_voltage_current(zeka_bus, ZEKA_VOLTAGE, 0)
+    zeka_obj.zeka_receive(zeka_bus)
+    zeka_obj.zeka_start(zeka_bus)
+    zeka_obj.zeka_receive(zeka_bus)
+    prev_current = 0.0
+    while i < len(building_dataset):
+        zeka_obj.zeka_feedback_status(zeka_bus)
+        zeka_obj.zeka_receive(zeka_bus)
+        sleep(1)
+        if stations[0].battery_current != prev_current:
+            current = float(stations[0].battery_current)
+            zeka_obj.zeka_set_voltage_current(zeka_bus, ZEKA_VOLTAGE, current)
+            zeka_obj.zeka_receive(zeka_bus)
+            prev_current = stations[0].battery_current
+    zeka_obj.zeka_stop(zeka_bus)
+
 if __name__ == "__main__":
     # TODO: how to simulate charging station batteries (sharing/charging/assigning batteries)
     # TODO: how to turn on/off physical battery
@@ -381,6 +425,7 @@ if __name__ == "__main__":
     parser.add_argument("--user-input-port", "--up", dest="user_port", type=int, default=8000, help="Port to listen for user input (default: %(default)s)")
     parser.add_argument("--visualization-port", "--vp", dest="visualization_port", type=int, default=9000, help="Port to send visualization output (default: %(default)s)")
     parser.add_argument("--openevse-port", "--op", dest="openevse_port", default="", help="OpenEVSE serial port")
+    parser.add_argument("--zeka-port", "--zp", dest="zeka_port", default="", help="Zeka CAN port")
     parser.add_argument("--fast-sim", "--fs", dest="fast_sim", action="store_true", help="Run dataset without delay")
     parser.add_argument("--log", dest="log", action="store_true", help="Log building current, battery current and remaining SoC of each car")
     args = parser.parse_args()
@@ -416,11 +461,17 @@ if __name__ == "__main__":
     except Exception as ex:
          openevse = None
 
+    try:
+         zeka_bus = can.interface.Bus(bustype='slcan', channel=args.zeka_port, bitrate=500000)
+    except Exception as ex:
+         zeka_bus = None
+
     read_thread = Thread(target=read, args=(args.fast_sim, args.log)) # every two seconds
     state_control_thread = Thread(target=state_control, args=(args.fast_sim,))
     if not args.fast_sim:
         wait_for_car_thread = Thread(target=wait_for_car, args=(args.user_port,))
         publish_status_thread = Thread(target=publish_status, args=(2, args.visualization_port))
+        zeka_thread = Thread(target=zeka_control)
 
     read_thread.start()
     state_control_thread.start()
@@ -428,6 +479,7 @@ if __name__ == "__main__":
     if not args.fast_sim:
         wait_for_car_thread.start()
         publish_status_thread.start()
+        zeka_thread.start()
 
     read_thread.join()
 
