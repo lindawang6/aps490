@@ -27,9 +27,9 @@ See building_datasets and car_datasets for correct dataset format.
 
 ```./visualization.py 9000```
 
-## Connect to OpenEVSE:
+## Connect to OpenEVSE and Zeka via CAN:
 
-```./cms.py --building-dataset [building dataset file] --car-dataset [car dataset file] --user-input-port 8000 --openevse-port /dev/ttyUSB0```
+```./cms.py --building-dataset [building dataset file] --car-dataset [car dataset file] --user-input-port 8000 --openevse-port /dev/ttyUSB0 --zeka-port /dev/cu.usbmodem14101```
 
 ```./user_input.py 8000```
 

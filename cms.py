@@ -456,30 +456,33 @@ if __name__ == "__main__":
  
     start = args.start_time
 
-    try:
-         openevse = Serial(args.openevse_port, 115200, xonxoff=True)
-    except Exception as ex:
-         openevse = None
+    if (args.openevse_port != ""):
+        try:
+            openevse = Serial(args.openevse_port, 115200, xonxoff=True)
+        except Exception as ex:
+            openevse = None
 
-    try:
-         zeka_bus = can.interface.Bus(bustype='slcan', channel=args.zeka_port, bitrate=500000)
-    except Exception as ex:
-         zeka_bus = None
+    if (args.zeka_port != ""):
+        try:
+            zeka_bus = can.interface.Bus(bustype='slcan', channel=args.zeka_port, bitrate=500000)
+        except Exception as ex:
+            zeka_bus = None
 
     read_thread = Thread(target=read, args=(args.fast_sim, args.log)) # every two seconds
     state_control_thread = Thread(target=state_control, args=(args.fast_sim,))
-    if not args.fast_sim:
-        wait_for_car_thread = Thread(target=wait_for_car, args=(args.user_port,))
-        publish_status_thread = Thread(target=publish_status, args=(2, args.visualization_port))
-        zeka_thread = Thread(target=zeka_control)
 
     read_thread.start()
     state_control_thread.start()
 
     if not args.fast_sim:
-        wait_for_car_thread.start()
+        if openevse:
+            wait_for_car_thread = Thread(target=wait_for_car, args=(args.user_port,))
+            wait_for_car_thread.start()
+        if zeka_bus:
+            zeka_thread = Thread(target=zeka_control)
+            zeka_thread.start()
+        publish_status_thread = Thread(target=publish_status, args=(2, args.visualization_port))
         publish_status_thread.start()
-        zeka_thread.start()
 
     read_thread.join()
 
