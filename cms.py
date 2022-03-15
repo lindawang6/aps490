@@ -65,6 +65,7 @@ class Car:
     station_no = -1
     battery_no = -1
     prev_current = 0
+    measured_current = 0
 
 class Station:
     station_no = -1
@@ -129,7 +130,7 @@ def read(fast_sim, log):
                     measured_current = float(msg.decode().split(" ")[1]) / 1000
                 except Exception as e:
                     measured_current = car.charging_current * 0.8
-                print("Measured current: " + str(measured_current))
+            car.measured_current = measured_current
             car.delta_kWh -= measured_current * VOLTAGE * (READ_DELAY / 3600) * 0.001
             if car.delta_kWh < 0:
                 car.delta_kWh = 0
@@ -236,20 +237,26 @@ def read(fast_sim, log):
                     pass
                 if openevse.in_waiting > 0:
                     msg = openevse.read(openevse.in_waiting)
-                print("Advertised current: " + str(car.charging_current))
 
         # Log building current, battery current, remaining SoC
         if log:
+            write_openevse = False
             for car in cars:
                 file = open(car.name + ".txt", "a")
-                file.write(str(car.charging_current) + ", " + str(car.battery_current) + ", " + str(100 * car.delta_kWh/car.capacity) + ", " + str(car.battery_no) + "\n")
+                file.write(str(car.measured_current) + ", " + str(car.charging_current) + ", " + str(car.battery_current) + ", " + str(100 * car.delta_kWh/car.capacity) + ", " + str(car.battery_no) + "\n")
+                if car.name == "openevse":
+                    write_openevse = True
+            if not write_openevse:
+                file = open("openevse.txt", "a")
+                file.write("0, 0, 0, 0, 0\n")
+
             for station in stations:
                 file = open("station" + str(station.station_no) + ".txt", "a")
                 file.write(str(station.battery_current) + ", " + str(station.charging_current) + ", " + str(station.battery_capacity) + "\n")
 
             for car in car_dataset:
                 file = open(car[0] + ".txt", "a")
-                file.write("0, 0, 0, 0\n")
+                file.write("0, 0, 0, 0, 0\n")
 
         # charge station batteries with remaining current
 
@@ -267,10 +274,15 @@ def read(fast_sim, log):
         cars_mutex.release()
 
         end = time()
-        if fast_sim:
+        offset = end - start
+
+        if (offset) > READ_DELAY:
+            pass
+        elif fast_sim:
             sleep(FAST_READ_DELAY)
         else:
-            sleep(READ_DELAY - (end - start))
+            sleep(READ_DELAY - (offset))
+
         i += 1
 
 def state_control(fast_sim):
@@ -347,11 +359,21 @@ def wait_for_car(port):
                 if car_info["station_no"] == 0 and openevse:
                     cmd = b"$GS\r"
                     print("OpenEVSE station")
+
                     if openevse.is_open:
                         openevse.write(cmd)
-                    while openevse.in_waiting == 0:
+                    while openevse.in_waiting <= 5:
                         pass
-                    if openevse.in_waiting > 0:
+                    if openevse.in_waiting > 5:
+                        msg = openevse.read(openevse.in_waiting)
+
+                    sleep(2)
+
+                    if openevse.is_open:
+                        openevse.write(cmd)
+                    while openevse.in_waiting <= 5:
+                        pass
+                    if openevse.in_waiting > 5:
                         msg = openevse.read(openevse.in_waiting)
                     if msg.decode()[:6] == "$OK 02" or msg.decode()[:6] == "$OK 03":
                         print("Log: Car connected")
@@ -359,12 +381,20 @@ def wait_for_car(port):
                         print("Warn: Car not connected. OpenEVSE returned: " + msg.decode())
                         continue
 
+                    cmd = "$SV " + str(VOLTAGE * 1000) + "\r"
+                    if openevse.is_open:
+                        openevse.write(cmd.encode())
+                    while openevse.in_waiting == 0:
+                        pass
+                    if openevse.in_waiting > 0:
+                        msg = openevse.read(openevse.in_waiting)
+
                     car = Car()
                     car.name = "openevse"
                     car.simulation = False
                     car.make_model = car_info["make_model"].strip('\n').lower()
                     car.capacity = MAKE_MODEL[car.make_model]
-                    car.delta_kWh = car_info["delta_soc"] * car.capacity
+                    car.delta_kWh = car_info["delta_soc"] * car.capacity * 0.01
                     car.departure = str_to_int(car_info["departure"])
                     car.station_no = 0
                     cars_mutex.acquire()
