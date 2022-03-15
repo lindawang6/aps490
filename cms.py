@@ -12,8 +12,8 @@ from random import randint
 
 import zeka
 
-VOLTAGE = 240
-ZEKA_VOLTAGE = 300
+VOLTAGE = 208
+ZEKA_VOLTAGE = 550
 DEBUG = True
 
 BATTERY_CAPACITY = 5
@@ -128,7 +128,7 @@ def read(fast_sim, log):
                     measured_current = float(msg.decode().split(" ")[1]) / 1000
                 except Exception as e:
                     measured_current = car.charging_current * 0.8
-                print(measured_current)
+                print("Measured current: " + str(measured_current))
             car.delta_kWh -= measured_current * VOLTAGE * (READ_DELAY / 3600) * 0.001
             if car.delta_kWh < 0:
                 car.delta_kWh = 0
@@ -137,8 +137,8 @@ def read(fast_sim, log):
                 car.max_current = measured_current
 
         for station in stations:
-            station.battery_capacity -= station.battery_current * VOLTAGE * (READ_DELAY / 3600) * 0.001
-            station.battery_capacity += station.charging_current * VOLTAGE * (READ_DELAY / 3600) * 0.001
+            station.battery_capacity -= station.battery_current * VOLTAGE * (READ_DELAY / 3600) * 0.001 * 1.2
+            station.battery_capacity += station.charging_current * VOLTAGE * (READ_DELAY / 3600) * 0.001 * 0.8
 
         # assign current (cars are already sorted from highest priority to lowest priority)
         remove_cars = 0
@@ -234,6 +234,8 @@ def read(fast_sim, log):
                     pass
                 if openevse.in_waiting > 0:
                     msg = openevse.read(openevse.in_waiting)
+                print("Advertised current: " + str(car.charging_current))
+
         # Log building current, battery current, remaining SoC
         if log:
             for car in cars:
@@ -398,20 +400,20 @@ def zeka_control():
         zeka_obj.zeka_main_status(zeka_bus)
         zeka_obj.zeka_receive(zeka_bus)
         sleep(1)
-    zeka_obj.zeka_set_voltage_current(zeka_bus, ZEKA_VOLTAGE, 0)
+    zeka_obj.zeka_set_voltage_current(zeka_bus, ZEKA_VOLTAGE, 1)
     zeka_obj.zeka_receive(zeka_bus)
     zeka_obj.zeka_start(zeka_bus)
     zeka_obj.zeka_receive(zeka_bus)
-    prev_current = 0.0
+    current_set = 1.0
+
     while i < len(building_dataset):
         zeka_obj.zeka_feedback_status(zeka_bus)
         zeka_obj.zeka_receive(zeka_bus)
-        sleep(1)
-        if stations[0].battery_current != prev_current:
-            current = float(stations[0].battery_current)
-            zeka_obj.zeka_set_voltage_current(zeka_bus, ZEKA_VOLTAGE, current)
-            zeka_obj.zeka_receive(zeka_bus)
-            prev_current = stations[0].battery_current
+        sleep(0.5)
+        current_set = float(stations[0].battery_current)
+        if current_set < 1.0:
+            current_set = 1.0
+        zeka_obj.controller(zeka_bus, 500, current_set)
     zeka_obj.zeka_stop(zeka_bus)
 
 if __name__ == "__main__":

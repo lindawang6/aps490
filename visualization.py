@@ -26,7 +26,7 @@ if __name__ == "__main__":
 
         stdscr.clear()
         stdscr.addstr(0, 0, "Current time: " + visualization_info["current_time"])
-        stdscr.addstr(1, 0, "Available building power: " + str(visualization_info["building_power"]))
+        stdscr.addstr(1, 0, "Building consumption: " + str(visualization_info["building_power"]))
         i = 2
         for station_num, car in visualization_info["cars"].items():
             if car == "empty":
