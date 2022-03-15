@@ -64,6 +64,7 @@ class Car:
     capacity = 0
     station_no = -1
     battery_no = -1
+    prev_current = 0
 
 class Station:
     station_no = -1
@@ -144,6 +145,7 @@ def read(fast_sim, log):
         remove_cars = 0
         used_current = 0
         for car in cars:
+            car.prev_current = car.charging_current
             car.charging_current = int(available_current * car.priority)
 
             if car.priority == 0:
@@ -226,7 +228,7 @@ def read(fast_sim, log):
 
             used_current += (car.charging_current - car.battery_current)
 
-            if car.name == "openevse":
+            if car.name == "openevse" and car.charging_current != car.prev_current:
                 cmd = "$SC " + str(int(car.charging_current)) + " V\r"
                 if openevse.is_open:
                     openevse.write(cmd.encode())
