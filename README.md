@@ -37,7 +37,11 @@ See building_datasets and car_datasets for correct dataset format.
 
 ```./cms.py --building-dataset [building dataset file] --car-dataset [car dataset file] --fast-sim```
 
-## Log each car's building current, battery current and remaining SoC:
+## Log each car's data (logs will show in logs folder):
+
+Car format: measured current, advertised current, battery current, SoC, battery's station number
+
+Station format: discharge current, charge current, battery capacity
 
 ```./cms.py --building-dataset [building dataset file] --car-dataset [car dataset file] --log```
 

@@ -5,6 +5,7 @@ import socket
 import pickle
 import argparse
 import can
+import os
 from threading import Thread, Lock, Condition
 from time import time, sleep
 from serial import Serial
@@ -242,20 +243,20 @@ def read(fast_sim, log):
         if log:
             write_openevse = False
             for car in cars:
-                file = open(car.name + ".txt", "a")
+                file = open("logs/" + car.name + ".txt", "a")
                 file.write(str(car.measured_current) + ", " + str(car.charging_current) + ", " + str(car.battery_current) + ", " + str(100 * car.delta_kWh/car.capacity) + ", " + str(car.battery_no) + "\n")
                 if car.name == "openevse":
                     write_openevse = True
             if not write_openevse:
-                file = open("openevse.txt", "a")
+                file = open("logs/openevse.txt", "a")
                 file.write("0, 0, 0, 0, 0\n")
 
             for station in stations:
-                file = open("station" + str(station.station_no) + ".txt", "a")
+                file = open("logs/" + "station" + str(station.station_no) + ".txt", "a")
                 file.write(str(station.battery_current) + ", " + str(station.charging_current) + ", " + str(station.battery_capacity) + "\n")
 
             for car in car_dataset:
-                file = open(car[0] + ".txt", "a")
+                file = open("logs/" + car[0] + ".txt", "a")
                 file.write("0, 0, 0, 0, 0\n")
 
         # charge station batteries with remaining current
@@ -501,6 +502,13 @@ if __name__ == "__main__":
             zeka_bus = can.interface.Bus(bustype='slcan', channel=args.zeka_port, bitrate=500000)
         except Exception as ex:
             zeka_bus = None
+
+    if args.log:
+        if not os.path.exists("logs"):
+            os.makedirs("logs")
+        else:
+            for f in os.listdir("logs"):
+                os.remove(os.path.join("logs",f))
 
     read_thread = Thread(target=read, args=(args.fast_sim, args.log)) # every two seconds
     state_control_thread = Thread(target=state_control, args=(args.fast_sim,))
