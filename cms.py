@@ -10,6 +10,7 @@ from threading import Thread, Lock, Condition
 from time import time, sleep
 from serial import Serial
 from random import randint
+from datetime import datetime
 
 import zeka
 
@@ -242,11 +243,27 @@ def read(fast_sim, log):
         # Log building current, battery current, remaining SoC
         if log:
             write_openevse = False
+            
+            total_power_used = 0.0
+            total_buildingpower_used = 0.0
+            
             for car in cars:
                 file = open("logs/" + car.name + ".txt", "a")
                 file.write(str(car.measured_current) + ", " + str(car.charging_current) + ", " + str(car.battery_current) + ", " + str(100 * car.delta_kWh/car.capacity) + ", " + str(car.battery_no) + "\n")
+                
+                total_power_used += car.charging_current*VOLTAGE
+                total_buildingpower_used += (car.charging_current - car.battery_current)*VOLTAGE
+                
                 if car.name == "openevse":
                     write_openevse = True
+              
+            #Get power used vs available power
+            available_building_power = (max_building - building_dataset[i]) * 1000
+            
+            file = open("sim_power_use" + ".txt", "a")
+            now = datetime.strftime(datetime.now(), "%Y-%m-%d %H:%M:%S.%f")
+            file.write( str(now) + ", " + str(total_buildingpower_used) + ", " + str(available_building_power) + ", " + str(total_power_used) + ", " + "\n")
+            
             if not write_openevse:
                 file = open("logs/openevse.txt", "a")
                 file.write("0, 0, 0, 0, 0\n")
@@ -411,10 +428,21 @@ def publish_status(delay, port):
             while i < len(building_dataset):
                 visualization_info = {}
                 visualization_info["current_time"] = int_to_str(i * READ_DELAY)
-                visualization_info["building_power"] = building_dataset[i]
+                #visualization_info["building_power"] = building_dataset[i]
+                visualization_info["building_power"] = (max_building - building_dataset[i]) * 1000 #available building power
                 visualization_info["cars"] = {}
+                
+                total_power_used = 0.0
+                total_buildingpower_used = 0.0
+                
                 for car in cars:
                     visualization_info["cars"][car.station_no] = {"name": car.name, "delta_soc": 100 * car.delta_kWh/car.capacity, "current": car.charging_current, "battery": car.battery_current, "remaining_time": car.departure - i * READ_DELAY}
+                    total_power_used += car.charging_current*VOLTAGE
+                    total_buildingpower_used += (car.charging_current - car.battery_current)*VOLTAGE
+                    
+                visualization_info["total_buildingpower_used"] = total_buildingpower_used
+                visualization_info["total_power_used"] = total_power_used
+                
                 for num in range(num_stations):
                     if num not in visualization_info["cars"]:
                         visualization_info["cars"][num] = "empty"
