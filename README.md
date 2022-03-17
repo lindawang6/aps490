@@ -39,11 +39,15 @@ See building_datasets and car_datasets for correct dataset format.
 
 ## Log each car's data (logs will show in logs folder):
 
-Car format: measured current, advertised current, battery current, SoC, battery's station number
+Car format: time, measured current, advertised current, battery current, SoC, battery's station number, car priority
 
-Station format: discharge current, charge current, battery capacity
+Station format: time, discharge current, charge current, battery capacity
 
 ```./cms.py --building-dataset [building dataset file] --car-dataset [car dataset file] --log```
+
+## Continue from previous run using logs:
+
+```./cms.py --building-dataset [building dataset file] --car-dataset [car dataset file] --continue```
 
 ## Help:
 

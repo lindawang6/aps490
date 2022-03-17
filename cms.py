@@ -6,6 +6,7 @@ import pickle
 import argparse
 import can
 import os
+import subprocess
 from threading import Thread, Lock, Condition
 from time import time, sleep
 from serial import Serial
@@ -17,7 +18,7 @@ DEBUG = True
 
 VOLTAGE = 208
 ZEKA_VOLTAGE = 500
-EFFICIENCY = 0.8
+EFFICIENCY = 0.9
 
 BATTERY_CAPACITY = 5
 # Lithium ion batteries should charge at 0.8C
@@ -108,7 +109,7 @@ def read(fast_sim, log):
             wait.notify()
             wait.release()
 
-        start = time()
+        start_loop = time()
 
         cars_mutex.acquire()
 
@@ -245,22 +246,23 @@ def read(fast_sim, log):
         # Log building current, battery current, remaining SoC
         if log:
             write_openevse = False
+            current_time = int_to_str(i * READ_DELAY)
             for car in cars:
                 file = open("logs/" + car.name + ".txt", "a")
-                file.write(str(car.measured_current) + ", " + str(car.charging_current) + ", " + str(car.battery_current) + ", " + str(100 * car.delta_kWh/car.capacity) + ", " + str(car.battery_no) + "\n")
+                file.write(current_time + ", " + str(car.measured_current) + ", " + str(car.charging_current) + ", " + str(car.battery_current) + ", " + str(100 * car.delta_kWh/car.capacity) + ", " + str(car.battery_no) + ", " + str(car.priority) + "\n")
                 if car.name == "openevse":
                     write_openevse = True
             if not write_openevse:
                 file = open("logs/openevse.txt", "a")
-                file.write("0, 0, 0, 0, 0\n")
+                file.write(current_time + ", 0, 0, 0, 0, 0, 0\n")
 
             for station in stations:
                 file = open("logs/" + "station" + str(station.station_no) + ".txt", "a")
-                file.write(str(station.battery_current) + ", " + str(station.charging_current) + ", " + str(station.battery_capacity) + "\n")
+                file.write(current_time + ", " + str(station.battery_current) + ", " + str(station.charging_current) + ", " + str(station.battery_capacity) + "\n")
 
             for car in car_dataset:
                 file = open("logs/" + car[0] + ".txt", "a")
-                file.write("0, 0, 0, 0, 0\n")
+                file.write(current_time + ", 0, 0, 0, 0, 0, 0\n")
 
         # charge station batteries with remaining current
 
@@ -277,8 +279,8 @@ def read(fast_sim, log):
 
         cars_mutex.release()
 
-        end = time()
-        offset = end - start
+        end_loop = time()
+        offset = end_loop - start_loop
 
         if (offset) > READ_DELAY:
             pass
@@ -347,7 +349,7 @@ def state_control(fast_sim):
 
         cars_mutex.release()
 
-def wait_for_car(port):
+def wait_for_car(port, cont):
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
         s.bind(("127.0.0.1", port))
         s.listen()
@@ -393,17 +395,25 @@ def wait_for_car(port):
                     if openevse.in_waiting > 0:
                         msg = openevse.read(openevse.in_waiting)
 
-                    car = Car()
-                    car.name = "openevse"
-                    car.simulation = False
-                    car.make_model = car_info["make_model"].strip('\n').lower()
-                    car.capacity = MAKE_MODEL[car.make_model]
-                    car.delta_kWh = car_info["delta_soc"] * car.capacity * 0.01
-                    car.departure = str_to_int(car_info["departure"])
-                    car.station_no = 0
-                    cars_mutex.acquire()
-                    cars.append(car)
-                    cars_mutex.release()
+                    if not cont:
+                        car = Car()
+                        car.name = "openevse"
+                        car.simulation = False
+                        car.make_model = car_info["make_model"].strip('\n').lower()
+                        car.capacity = MAKE_MODEL[car.make_model]
+                        car.delta_kWh = car_info["delta_soc"] * car.capacity * 0.01
+                        car.departure = str_to_int(car_info["departure"])
+                        car.station_no = 0
+                        cars_mutex.acquire()
+                        cars.append(car)
+                        cars_mutex.release()
+                    else:
+                        for car in cars:
+                            if car.name == "openevse":
+                                cars_mutex.acquire()
+                                car.simulation = False
+                                car.departure = str_to_int(car_info["departure"])
+                                cars_mutex.release()
 
 def publish_status(delay, port):
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
@@ -451,15 +461,13 @@ def zeka_control():
             current_set = 1.0
         zeka_obj.controller(zeka_bus, ZEKA_VOLTAGE, current_set)
 
-        file = open("logs/zeka.txt", "a")
-        file.write(str(zeka_obj.zeka_read_current) + ", " + str(zeka_obj.zeka_read_voltage) + "\n")
+        if i % 4 == 0:
+            file = open("logs/zeka.txt", "a")
+            file.write(str(zeka_obj.zeka_read_current) + ", " + str(zeka_obj.zeka_read_voltage) + "\n")
 
     zeka_obj.zeka_stop(zeka_bus)
 
 if __name__ == "__main__":
-    # TODO: how to simulate charging station batteries (sharing/charging/assigning batteries)
-    # TODO: how to turn on/off physical battery
-
     parser = argparse.ArgumentParser(description='Charging Management System')
     parser.add_argument("--building-dataset", "--bd", dest="building_file", required=True, help="Building dataset file")
     parser.add_argument("--car-dataset", "--cd", dest="car_file", required=True, help="Car dataset file")
@@ -470,6 +478,7 @@ if __name__ == "__main__":
     parser.add_argument("--zeka-port", "--zp", dest="zeka_port", default="", help="Zeka CAN port")
     parser.add_argument("--fast-sim", "--fs", dest="fast_sim", action="store_true", help="Run dataset without delay")
     parser.add_argument("--log", dest="log", action="store_true", help="Log building current, battery current and remaining SoC of each car")
+    parser.add_argument("--continue", dest="cont", action="store_true", help="Continue previous simulation using logs")
     args = parser.parse_args()
 
     try:
@@ -496,7 +505,13 @@ if __name__ == "__main__":
     for num in range(num_stations):
         stations.append(Station(station_no=num))
  
-    start = args.start_time
+    if not args.cont:
+        start = args.start_time
+    else:
+        start = args.start_time
+        line = subprocess.check_output(['tail', '-1', "logs/station0.txt"])
+        data = line.decode().split(",")
+        i = int(str_to_int(data[0]) / 2) + 1
 
     if (args.openevse_port != ""):
         try:
@@ -513,9 +528,73 @@ if __name__ == "__main__":
     if args.log:
         if not os.path.exists("logs"):
             os.makedirs("logs")
-        else:
+        elif not args.cont:
             for f in os.listdir("logs"):
                 os.remove(os.path.join("logs",f))
+
+    openevse_arrived = False
+    # Load previous logs
+    if args.cont:
+        for f in os.listdir("logs"):
+            if f[0:3] == "sim" or f[0:8] == "openevse":
+                line = subprocess.check_output(['tail', '-1', os.path.join("logs",f)])
+                timestamp, measured_current, current, battery_current, soc, battery_no, priority = line.decode().split(",")
+
+                if float(soc.strip()) == 0:
+                    continue
+
+                if f[0:8] == "openevse":
+                    openevse_arrived = True
+                    car = Car()
+                    car.name = "openevse"
+                    car.make_model = "nissan leaf"
+                    car.capacity = MAKE_MODEL[car.make_model]
+                    car.delta_kWh = float(soc.strip()) * car.capacity * 0.01
+                    car.station_no = 0
+                    car.charging_current = float(current.strip())
+                    car.battery_current = float(battery_current.strip())
+                    car.measured_current = float(measured_current.strip())
+                    car.battery_no = int(battery_no.strip())
+                    car.priority = float(priority.strip())
+                    cars_mutex.acquire()
+                    cars.append(car)
+                    cars_mutex.release()
+                    continue
+
+                for car_data in car_dataset:
+                    name, arrival, departure, model, desired_soc, sleep_mode = car_data
+                    if name.strip() == f[0:4]:
+                        car = Car()
+                        car.name = name
+                        car.make_model = model.strip().lower()
+                        car.capacity = MAKE_MODEL[car.make_model]
+                        car.delta_kWh = float(soc.strip()) * car.capacity * 0.01
+                        car.departure = str_to_int(departure)
+                        car.sleep_mode = sleep_mode.strip() == 'True'
+                        car.station_no = int(f[3])
+                        car.charging_current = float(current.strip())
+                        car.battery_current = float(battery_current.strip())
+                        car.measured_current = float(measured_current.strip())
+                        car.battery_no = int(battery_no.strip())
+                        car.priority = float(priority.strip())
+                        cars_mutex.acquire()
+                        cars.append(car)
+                        cars_mutex.release()
+
+            if f[0:7] == "station":
+                line = subprocess.check_output(['tail', '-1', os.path.join("logs",f)])
+                timestamp, battery_current, charging_current, capacity = line.decode().split(",")
+                stations[int(f[7])].battery_current = float(battery_current.strip())
+                stations[int(f[7])].charging_current = float(charging_current.strip())
+                stations[int(f[7])].battery_capacity = float(capacity.strip())
+
+        car_dataset = [x for x in car_dataset if int(x[1]) > str_to_int(start)]
+
+        if zeka_bus and openevse_arrived:
+            zeka_thread = Thread(target=zeka_control)
+            zeka_thread.start()
+        if openevse and openevse_arrived:
+            wait_for_car(args.user_port, True)
 
     read_thread = Thread(target=read, args=(args.fast_sim, args.log)) # every two seconds
     state_control_thread = Thread(target=state_control, args=(args.fast_sim,))
@@ -524,10 +603,10 @@ if __name__ == "__main__":
     state_control_thread.start()
 
     if not args.fast_sim:
-        if openevse:
-            wait_for_car_thread = Thread(target=wait_for_car, args=(args.user_port,))
+        if openevse and not openevse_arrived:
+            wait_for_car_thread = Thread(target=wait_for_car, args=(args.user_port, False))
             wait_for_car_thread.start()
-        if zeka_bus:
+        if zeka_bus and not openevse_arrived:
             zeka_thread = Thread(target=zeka_control)
             zeka_thread.start()
         publish_status_thread = Thread(target=publish_status, args=(2, args.visualization_port))
