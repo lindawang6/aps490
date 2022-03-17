@@ -122,7 +122,7 @@ class Zeka:
 if __name__ == "__main__":
     manual = False
 
-    bus = can.interface.Bus(bustype='slcan', channel='/dev/cu.usbmodem14101', bitrate=500000)
+    bus = can.interface.Bus(bustype='slcan', channel='/dev/ttyACM0', bitrate=500000)
     zeka_obj = Zeka()
 
     zeka_obj.zeka_init(bus)

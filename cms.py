@@ -13,9 +13,11 @@ from random import randint
 
 import zeka
 
-VOLTAGE = 208
-ZEKA_VOLTAGE = 550
 DEBUG = True
+
+VOLTAGE = 208
+ZEKA_VOLTAGE = 500
+EFFICIENCY = 0.8
 
 BATTERY_CAPACITY = 5
 # Lithium ion batteries should charge at 0.8C
@@ -27,9 +29,10 @@ READ_DELAY = 2 # 2 seconds
 FAST_CONTROL_DELAY =  0.006
 FAST_READ_DELAY = 0.002
 
-MAKE_MODEL = {"nissan leaf": 40,
+MAKE_MODEL = {"nissan leaf": 24,
               "tesla model y": 75,
-              "chevrolet bolt": 65}
+              "chevrolet bolt": 65,
+              "renault zoe": 52}
 
 openevse = None
 zeka_bus = None
@@ -118,7 +121,7 @@ def read(fast_sim, log):
         # TODO: use dataset currents for measured_current
         for car in cars:
             if car.simulation:
-                measured_current = car.charging_current * 0.8
+                measured_current = car.charging_current * EFFICIENCY
             else:
                 cmd = b"$GG\r"
                 if openevse.is_open:
@@ -130,18 +133,18 @@ def read(fast_sim, log):
                 try:
                     measured_current = float(msg.decode().split(" ")[1]) / 1000
                 except Exception as e:
-                    measured_current = car.charging_current * 0.8
+                    measured_current = car.charging_current * EFFICIENCY
             car.measured_current = measured_current
             car.delta_kWh -= measured_current * VOLTAGE * (READ_DELAY / 3600) * 0.001
             if car.delta_kWh < 0:
                 car.delta_kWh = 0
             # check saturation
-            if measured_current > 0 and measured_current <= car.charging_current * 0.75: # this value may need to be tuned
+            if measured_current > 0 and measured_current <= car.charging_current * (EFFICIENCY - 0.1): # this value may need to be tuned
                 car.max_current = measured_current
 
         for station in stations:
-            station.battery_capacity -= station.battery_current * VOLTAGE * (READ_DELAY / 3600) * 0.001 * 1.2
-            station.battery_capacity += station.charging_current * VOLTAGE * (READ_DELAY / 3600) * 0.001 * 0.8
+            station.battery_capacity -= station.battery_current * VOLTAGE * (READ_DELAY / 3600) * 0.001 * (1.0/EFFICIENCY)
+            station.battery_capacity += station.charging_current * VOLTAGE * (READ_DELAY / 3600) * 0.001 * EFFICIENCY
 
         # assign current (cars are already sorted from highest priority to lowest priority)
         remove_cars = 0
@@ -328,7 +331,7 @@ def state_control(fast_sim):
 
         # check if battery needs to be turned on
         for car in cars:
-            if not car.battery_on and car.delta_kWh >= 0.8 * car.max_current * VOLTAGE * 0.001 * (car.departure - current_time) / 3600:
+            if not car.battery_on and car.delta_kWh >= EFFICIENCY * car.max_current * VOLTAGE * 0.001 * (car.departure - current_time) / 3600:
                 print("Log: Turning on battery for " + car.name)
                 car.battery_on = True 
 
@@ -433,7 +436,7 @@ def zeka_control():
         zeka_obj.zeka_main_status(zeka_bus)
         zeka_obj.zeka_receive(zeka_bus)
         sleep(1)
-    zeka_obj.zeka_set_voltage_current(zeka_bus, ZEKA_VOLTAGE, 1)
+    zeka_obj.zeka_set_voltage_current(zeka_bus, ZEKA_VOLTAGE + 50, 1)
     zeka_obj.zeka_receive(zeka_bus)
     zeka_obj.zeka_start(zeka_bus)
     zeka_obj.zeka_receive(zeka_bus)
@@ -443,10 +446,14 @@ def zeka_control():
         zeka_obj.zeka_feedback_status(zeka_bus)
         zeka_obj.zeka_receive(zeka_bus)
         sleep(0.5)
-        current_set = float(stations[0].battery_current)
+        current_set = (VOLTAGE * float(stations[0].battery_current)) / ZEKA_VOLTAGE
         if current_set < 1.0:
             current_set = 1.0
-        zeka_obj.controller(zeka_bus, 500, current_set)
+        zeka_obj.controller(zeka_bus, ZEKA_VOLTAGE, current_set)
+
+        file = open("logs/zeka.txt", "a")
+        file.write(str(zeka_obj.zeka_read_current) + ", " + str(zeka_obj.zeka_read_voltage) + "\n")
+
     zeka_obj.zeka_stop(zeka_bus)
 
 if __name__ == "__main__":
