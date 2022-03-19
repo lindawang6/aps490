@@ -20,7 +20,7 @@ VOLTAGE = 208
 ZEKA_VOLTAGE = 500
 EFFICIENCY = 0.9
 
-BATTERY_CAPACITY = 30
+BATTERY_CAPACITY = 5
 # Lithium ion batteries should charge at 0.8C
 BATTERY_CHARGING_CURRENT = (BATTERY_CAPACITY * 1000 / VOLTAGE) * 0.8
 
@@ -103,6 +103,8 @@ def int_to_str(integer):
 def read(fast_sim, log):
     # delay in seconds
     global i
+    global stations
+
     while i < len(building_dataset):
         if i % CONTROL_DELAY // READ_DELAY == 0:
             wait.acquire()
@@ -146,6 +148,7 @@ def read(fast_sim, log):
         for station in stations:
             station.battery_capacity -= station.battery_current * VOLTAGE * (READ_DELAY / 3600) * 0.001 * (1.0/EFFICIENCY)
             station.battery_capacity += station.charging_current * VOLTAGE * (READ_DELAY / 3600) * 0.001 * EFFICIENCY
+            station.battery_current = 0
 
         # assign current (cars are already sorted from highest priority to lowest priority)
         remove_cars = 0
@@ -154,7 +157,6 @@ def read(fast_sim, log):
             car.prev_current = car.charging_current
             car.charging_current = int(available_current * car.priority)
 
-            stations[car.battery_no].battery_current = 0
             car.battery_no = -1
             car.battery_current = 0
 
@@ -173,10 +175,10 @@ def read(fast_sim, log):
                         car.battery_current = car.max_current - car.charging_current
                         car.battery_no = car.station_no
                     else:
-                        stations_tmp = [station for station in stations if (station.battery_current == 0 and station.station_no != 0)]
+                        stations_tmp = [station for station in stations if (station.battery_current == 0 and station.battery_capacity > car.max_current * VOLTAGE * (READ_DELAY / 3600) * 0.001 and station.station_no != 0)]
                         stations_tmp.sort(key=lambda x: x.battery_capacity, reverse=True)
 
-                        if len(stations_tmp) > 0 and stations_tmp[0].battery_capacity > car.max_current * VOLTAGE * (READ_DELAY / 3600) * 0.001:
+                        if len(stations_tmp) > 0:
                             stations[stations_tmp[0].station_no].battery_current = car.max_current - car.charging_current
                             car.battery_current = car.max_current - car.charging_current
                             car.battery_no = stations_tmp[0].station_no
