@@ -20,7 +20,7 @@ VOLTAGE = 208
 ZEKA_VOLTAGE = 500
 EFFICIENCY = 0.9
 
-BATTERY_CAPACITY = 5
+BATTERY_CAPACITY = 10
 # Lithium ion batteries should charge at 0.8C
 BATTERY_CHARGING_CURRENT = (BATTERY_CAPACITY * 1000 / VOLTAGE) * 0.8
 
@@ -41,6 +41,7 @@ i = 0
 num_stations = 0
 station_number = 1
 start = ""
+low_current_num = 0
 
 building_dataset = []
 car_dataset = []
@@ -104,14 +105,14 @@ def read(fast_sim, log):
     # delay in seconds
     global i
     global stations
+    global low_current_num
 
     while i < len(building_dataset):
+        start_loop = time()
         if i % CONTROL_DELAY // READ_DELAY == 0:
             wait.acquire()
             wait.notify()
             wait.release()
-
-        start_loop = time()
 
         cars_mutex.acquire()
 
@@ -120,8 +121,6 @@ def read(fast_sim, log):
         available_current = (max_building - building_dataset[i]) * 1000 / VOLTAGE 
 
         # read current (read from openevse or dataset for simulation)
-        # TODO: make datasets for measured current that accounts for current saturation
-        # TODO: use dataset currents for measured_current
         for car in cars:
             if car.simulation:
                 measured_current = car.charging_current * EFFICIENCY
@@ -141,9 +140,17 @@ def read(fast_sim, log):
             car.delta_kWh -= measured_current * VOLTAGE * (READ_DELAY / 3600) * 0.001
             if car.delta_kWh < 0:
                 car.delta_kWh = 0
+
             # check saturation
-            #if measured_current > 0 and measured_current <= car.charging_current * (EFFICIENCY - 0.1): # this value may need to be tuned
-            #    car.max_current = measured_current
+            if not car.simulation:
+                if measured_current > 0 and measured_current <= car.charging_current * (EFFICIENCY - 0.1):
+                    low_current_num = low_current_num + 1
+                else:
+                    low_current_num = 0
+
+                if low_current_num >= 10:
+                    car.max_current = measured_current
+                    low_current_num = 0
 
         for station in stations:
             station.battery_capacity -= station.battery_current * VOLTAGE * (READ_DELAY / 3600) * 0.001 * (1.0/EFFICIENCY)
@@ -166,10 +173,12 @@ def read(fast_sim, log):
                 not_max = False
                 if car.charging_current < car.max_current:
                     if not car.simulation:
-                        if car.battery_no == -1:
+                        if stations[0].battery_capacity > car.max_current * VOLTAGE * (READ_DELAY / 3600) * 0.001:
                             car.battery_no = 0
-                        stations[0].battery_current = car.max_current - car.charging_current
-                        car.battery_current = car.max_current - car.charging_current
+                            stations[0].battery_current = car.max_current - car.charging_current
+                            car.battery_current = car.max_current - car.charging_current
+                        else:
+                            not_max = True
                     elif stations[car.station_no].battery_current == 0 and stations[car.station_no].battery_capacity > car.max_current * VOLTAGE * (READ_DELAY / 3600) * 0.001:
                         stations[car.station_no].battery_current = car.max_current - car.charging_current
                         car.battery_current = car.max_current - car.charging_current
@@ -194,10 +203,12 @@ def read(fast_sim, log):
                         car.charging_current = car.min_current
 
                         if not car.simulation:
-                            if car.battery_no == -1:
+                            if stations[0].battery_capacity > car.min_current * VOLTAGE * (READ_DELAY / 3600) * 0.001:
                                 car.battery_no = 0
-                            stations[0].battery_current = car.max_current - car.charging_current
-                            car.battery_current = car.max_current - car.charging_current
+                                stations[0].battery_current = car.min_current - (available_current - used_current)
+                                car.battery_current = car.min_current - (available_current - used_current)
+                            else:
+                                car.charging_current = 0
                         elif stations[car.station_no].battery_current == 0 and stations[car.station_no].battery_capacity > car.min_current * VOLTAGE * (READ_DELAY / 3600) * 0.001:
                             stations[car.station_no].battery_current = car.min_current - (available_current - used_current)
                             car.battery_current = car.min_current - (available_current - used_current)
@@ -545,6 +556,7 @@ if __name__ == "__main__":
                     car.battery_current = float(battery_current.strip())
                     car.measured_current = float(measured_current.strip())
                     car.battery_no = int(battery_no.strip())
+                    car.battery_on = (int(battery_no.strip()) != -1)
                     car.priority = float(priority.strip())
                     cars_mutex.acquire()
                     cars.append(car)
@@ -565,6 +577,7 @@ if __name__ == "__main__":
                         car.battery_current = float(battery_current.strip())
                         car.measured_current = float(measured_current.strip())
                         car.battery_no = int(battery_no.strip())
+                        car.battery_on = (int(battery_no.strip()) != -1)
                         car.priority = float(priority.strip())
                         cars_mutex.acquire()
                         cars.append(car)
