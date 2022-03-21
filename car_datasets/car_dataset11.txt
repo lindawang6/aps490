@@ -1,0 +1,4 @@
+sim1, 60, 19:10:00, tesla model y, 60, False
+sim2, 90, 19:10:00, tesla model y, 60, False
+sim3, 120, 19:25:00, tesla model y, 60, True
+sim4, 180, 19:25:00, tesla model y, 60, True
