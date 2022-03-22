@@ -483,7 +483,7 @@ def zeka_control():
 
         if i % 4 == 0:
             file = open("logs/zeka.txt", "a")
-            file.write(str(zeka_obj.zeka_read_current) + ", " + str(zeka_obj.zeka_read_voltage) + "\n")
+            file.write(int_to_str(i * READ_DELAY) + ", " + str(zeka_obj.zeka_read_current) + ", " + str(zeka_obj.zeka_read_voltage) + "\n")
 
     zeka_obj.zeka_stop(zeka_bus)
 
