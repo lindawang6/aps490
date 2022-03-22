@@ -33,7 +33,10 @@ FAST_READ_DELAY = 0.002
 MAKE_MODEL = {"nissan leaf": 24,
               "tesla model y": 75,
               "chevrolet bolt": 65,
-              "renault zoe": 52}
+              "renault zoe": 52,
+              "tesla model 3": 54,
+              "tesla model s": 90,
+              "tesla model x": 100}
 
 openevse = None
 zeka_bus = None
@@ -630,8 +633,9 @@ if __name__ == "__main__":
         if zeka_bus and not openevse_arrived:
             zeka_thread = Thread(target=zeka_control)
             zeka_thread.start()
-        publish_status_thread = Thread(target=publish_status, args=(2, args.visualization_port))
-        publish_status_thread.start()
+
+    publish_status_thread = Thread(target=publish_status, args=(2, args.visualization_port))
+    publish_status_thread.start()
 
     read_thread.join()
 
