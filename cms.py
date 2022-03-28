@@ -14,6 +14,9 @@ from random import randint
 
 import zeka
 
+# ip_address = "169.254.36.234"
+ip_address = "127.0.0.1"
+
 DEBUG = True
 
 VOLTAGE = 208
@@ -363,7 +366,7 @@ def state_control(fast_sim):
 def wait_for_car(port, cont):
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
         print("Listening on " + str(port))
-        s.bind(("127.0.0.1", port))
+        s.bind((ip_address, port))
         s.listen()
         while i < len(building_dataset):
             conn, addr = s.accept()
@@ -430,30 +433,40 @@ def wait_for_car(port, cont):
 
 def publish_status(delay, port):
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
-        s.bind(("127.0.0.1", port))
+        s.bind((ip_address, port))
         s.listen()
         conn, addr = s.accept()
         with conn:
             while i < len(building_dataset):
                 visualization_info = {}
                 visualization_info["current_time"] = int_to_str(i * READ_DELAY)
-                visualization_info["building_power"] = (max_building - building_dataset[i]) * 1000
+                visualization_info["avail_building_power"] = (max_building - building_dataset[i]) * 1000
+                visualization_info["max_power"] = max_building*1000
                 visualization_info["cars"] = {}
 
                 total_power_used = 0.0
                 total_building_power_used = 0.0
+                total_power_to_batteries = 0.0
+                total_energy_req = 0.0
 
                 for car in cars:
                     visualization_info["cars"][car.station_no] = {"name": car.name, "delta_soc": 100 * car.delta_kWh/car.capacity, "current": car.charging_current, "battery": car.battery_current, "remaining_time": car.departure - i * READ_DELAY}
                     total_power_used += car.charging_current * VOLTAGE
                     total_building_power_used += (car.charging_current - car.battery_current) * VOLTAGE
+                    total_energy_req += car.delta_kWh
+
+                for station in stations:
+                    total_power_to_batteries += station.charging_current*VOLTAGE
 
                 visualization_info["total_building_power_used"] = total_building_power_used
                 visualization_info["total_power_used"] = total_power_used
+                visualization_info["total_power_to_batteries"] = total_power_to_batteries
+                visualization_info["total_energy_req"] = total_energy_req
 
                 for num in range(num_stations):
                     if num not in visualization_info["cars"]:
                         visualization_info["cars"][num] = "empty"
+                
                 data = pickle.dumps(visualization_info)
                 try:
                     conn.send(data)
