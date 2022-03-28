@@ -288,7 +288,7 @@ def read(fast_sim, log):
                 file = open("logs/" + car[0] + ".txt", "a")
                 file.write(current_time + ", 0, 0, 0, 0, 0, 0\n")
 
-            file = open("sim_power_use" + ".txt", "a")
+            file = open("logs/sim_power_use" + ".txt", "a")
             file.write(current_time + ", " + str(total_building_power_used) + ", " + str((max_building - building_dataset[i]) * 1000) + ", " + str(total_power_used) + "\n")
 
         cars_mutex.release()
