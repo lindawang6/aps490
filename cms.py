@@ -14,7 +14,6 @@ from random import randint
 
 import zeka
 
-# ip_address = "169.254.36.234"
 ip_address = "127.0.0.1"
 
 DEBUG = True
@@ -288,7 +287,7 @@ def read(fast_sim, log):
                 file = open("logs/" + car[0] + ".txt", "a")
                 file.write(current_time + ", 0, 0, 0, 0, 0, 0\n")
 
-            file = open("logs/sim_power_use" + ".txt", "a")
+            file = open("logs/power_use" + ".txt", "a")
             file.write(current_time + ", " + str(total_building_power_used) + ", " + str((max_building - building_dataset[i]) * 1000) + ", " + str(total_power_used) + "\n")
 
         cars_mutex.release()
@@ -366,7 +365,7 @@ def state_control(fast_sim):
 def wait_for_car(port, cont):
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
         print("Listening on " + str(port))
-        s.bind((ip_address, port))
+        s.bind(("127.0.0.1", port))
         s.listen()
         while i < len(building_dataset):
             conn, addr = s.accept()
@@ -419,7 +418,6 @@ def wait_for_car(port, cont):
                         car.delta_kWh = car_info["delta_soc"] * car.capacity * 0.01
                         car.departure = str_to_int(car_info["departure"])
                         car.station_no = 0
-                        car.sleep_mode = True
                         cars_mutex.acquire()
                         cars.append(car)
                         cars_mutex.release()
@@ -594,7 +592,6 @@ if __name__ == "__main__":
                     car.battery_no = int(battery_no.strip())
                     car.battery_on = (int(battery_no.strip()) != -1)
                     car.priority = float(priority.strip())
-                    car.sleep_mode = True
                     cars_mutex.acquire()
                     cars.append(car)
                     cars_mutex.release()
