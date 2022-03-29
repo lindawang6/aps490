@@ -419,6 +419,7 @@ def wait_for_car(port, cont):
                         car.delta_kWh = car_info["delta_soc"] * car.capacity * 0.01
                         car.departure = str_to_int(car_info["departure"])
                         car.station_no = 0
+                        car.sleep_mode = True
                         cars_mutex.acquire()
                         cars.append(car)
                         cars_mutex.release()
@@ -593,6 +594,7 @@ if __name__ == "__main__":
                     car.battery_no = int(battery_no.strip())
                     car.battery_on = (int(battery_no.strip()) != -1)
                     car.priority = float(priority.strip())
+                    car.sleep_mode = True
                     cars_mutex.acquire()
                     cars.append(car)
                     cars_mutex.release()
